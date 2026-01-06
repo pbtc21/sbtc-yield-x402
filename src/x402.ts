@@ -1,16 +1,18 @@
 import type { Context, Next } from "hono";
-import type { Env, PaymentInfo } from "./types";
+import type { Env } from "./types";
 import { deserializeTransaction, broadcastTransaction } from "@stacks/transactions";
 
-export function createPaymentResponse(env: Env): { error: string; payment: PaymentInfo } {
+// Standard x402 payment response
+function createX402Response(env: Env) {
+  const nonce = crypto.randomUUID().replace(/-/g, "");
   return {
-    error: "Payment Required",
-    payment: {
-      amount: env.PAYMENT_AMOUNT,
-      token: "STX",
-      address: env.PAYMENT_ADDRESS,
-      memo: "yield-calc",
-    },
+    maxAmountRequired: env.PAYMENT_AMOUNT,
+    resource: "/calculate-yield",
+    payTo: env.PAYMENT_ADDRESS,
+    network: "mainnet",
+    nonce,
+    expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+    tokenType: "STX",
   };
 }
 
@@ -21,7 +23,6 @@ async function verifyAndBroadcastPayment(
   try {
     const tx = deserializeTransaction(rawTxHex);
 
-    // Check it's a token transfer
     if (tx.payload.payloadType !== 0) {
       return { success: false, error: "Transaction is not a STX transfer" };
     }
@@ -33,7 +34,6 @@ async function verifyAndBroadcastPayment(
       return { success: false, error: `Insufficient payment: got ${amount}, need ${minAmount}` };
     }
 
-    // Broadcast the transaction
     const broadcastResult = await broadcastTransaction({
       transaction: tx,
       network: "mainnet",
@@ -50,15 +50,13 @@ async function verifyAndBroadcastPayment(
 }
 
 export async function x402Middleware(c: Context<{ Bindings: Env }>, next: Next) {
-  // Check both X-Payment and X-Payment-Proof for compatibility
-  const paymentProof = c.req.header("X-Payment") || c.req.header("X-Payment-Proof");
+  const paymentProof = c.req.header("X-Payment");
 
   if (!paymentProof) {
-    return c.json(createPaymentResponse(c.env), 402);
+    return c.json(createX402Response(c.env), 402);
   }
 
-  // Verify and broadcast the payment
-  const minAmount = parseInt(c.env.PAYMENT_AMOUNT) || 50000; // 0.05 STX default
+  const minAmount = parseInt(c.env.PAYMENT_AMOUNT) || 1000;
   const result = await verifyAndBroadcastPayment(paymentProof, minAmount);
 
   if (!result.success) {
@@ -68,8 +66,6 @@ export async function x402Middleware(c: Context<{ Bindings: Env }>, next: Next) 
     }, 402);
   }
 
-  // Attach payment info to context for downstream use
   c.set("paymentTxid", result.txid);
-
   await next();
 }

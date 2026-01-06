@@ -11,9 +11,10 @@ app.use("*", cors());
 app.get("/", (c) => {
   return c.json({
     service: "sBTC Yield Calculator",
-    version: "1.0.0",
+    version: "2.0.0",
     endpoint: "POST /calculate-yield",
-    pricing: "0.05 STX per request",
+    pricing: "0.001 STX per request",
+    x402: true,
   });
 });
 
