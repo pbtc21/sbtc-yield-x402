@@ -2,17 +2,52 @@ import type { Context, Next } from "hono";
 import type { Env } from "./types";
 import { deserializeTransaction, broadcastTransaction } from "@stacks/transactions";
 
-// Standard x402 payment response
-function createX402Response(env: Env) {
+// sBTC contract
+const SBTC_CONTRACT = {
+  address: 'SP3K8BC0PPEVCV7NZ6QSRWPQ2JE9E5B6N3PA0KBR9',
+  name: 'token-sbtc',
+};
+
+type PaymentTokenType = 'STX' | 'sBTC';
+
+function getPaymentTokenType(c: Context): PaymentTokenType {
+  const queryToken = c.req.query('tokenType');
+  const headerToken = c.req.header('X-PAYMENT-TOKEN-TYPE');
+  const tokenStr = (headerToken || queryToken || 'STX').toUpperCase();
+  return tokenStr === 'SBTC' ? 'sBTC' : 'STX';
+}
+
+// Standard x402 payment response (supports STX and sBTC)
+function createX402Response(env: Env, c: Context) {
   const nonce = crypto.randomUUID().replace(/-/g, "");
-  return {
-    maxAmountRequired: env.PAYMENT_AMOUNT,
+  const tokenType = getPaymentTokenType(c);
+  const sbtcAmount = Math.max(1, Math.ceil(parseInt(env.PAYMENT_AMOUNT) / 100000)); // Convert to rough sat equivalence
+
+  const baseResponse = {
     resource: "/calculate-yield",
     payTo: env.PAYMENT_ADDRESS,
     network: "mainnet",
     nonce,
     expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+  };
+
+  if (tokenType === 'sBTC') {
+    return {
+      ...baseResponse,
+      maxAmountRequired: sbtcAmount.toString(),
+      tokenType: 'sBTC',
+      tokenContract: SBTC_CONTRACT,
+    };
+  }
+
+  return {
+    ...baseResponse,
+    maxAmountRequired: env.PAYMENT_AMOUNT,
     tokenType: "STX",
+    paymentOptions: {
+      stx: { amount: env.PAYMENT_AMOUNT },
+      sbtc: { amount: sbtcAmount, tokenContract: SBTC_CONTRACT },
+    },
   };
 }
 
@@ -53,7 +88,7 @@ export async function x402Middleware(c: Context<{ Bindings: Env }>, next: Next) 
   const paymentProof = c.req.header("X-Payment");
 
   if (!paymentProof) {
-    return c.json(createX402Response(c.env), 402);
+    return c.json(createX402Response(c.env, c), 402);
   }
 
   const minAmount = parseInt(c.env.PAYMENT_AMOUNT) || 1000;
