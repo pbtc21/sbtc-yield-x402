@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { Env, YieldInput } from "./types";
 import { calculateYield } from "./yield";
-import { x402Middleware } from "./x402";
+import { x402Middleware } from "./x402-lite";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -490,6 +490,50 @@ app.get("/", (c) => {
     endpoint: "POST /calculate-yield",
     pricing: "0.001 STX per request",
     x402: true,
+  });
+});
+
+// x402 discovery endpoint
+app.get("/calculate-yield", (c) => {
+  const paymentAddress = c.env.PAYMENT_ADDRESS;
+  const paymentAmount = c.env.PAYMENT_AMOUNT;
+
+  return c.json({
+    x402Version: 1,
+    name: "sBTC Yield Calculator",
+    accepts: [{
+      scheme: "exact",
+      network: "stacks",
+      maxAmountRequired: paymentAmount,
+      resource: "/calculate-yield",
+      description: "Looped leverage yield calculator for sBTC collateral",
+      mimeType: "application/json",
+      payTo: paymentAddress,
+      maxTimeoutSeconds: 300,
+      asset: "STX",
+      outputSchema: {
+        input: {
+          type: "object",
+          properties: {
+            initialCollateral: { type: "number", description: "Initial sBTC collateral amount" },
+            borrowRatio: { type: "number", description: "LTV ratio (0-1)", default: 0.8 },
+            iterations: { type: "number", description: "Number of loop iterations", default: 5 },
+            baseApy: { type: "number", description: "Base APY percentage", default: 5.0 }
+          },
+          required: ["initialCollateral"]
+        },
+        output: {
+          type: "object",
+          properties: {
+            effectiveApy: { type: "string", description: "Effective APY after leverage" },
+            collateralMultiple: { type: "string", description: "Total leverage multiple" },
+            liquidationRisk: { type: "string", description: "BTC price drop to trigger liquidation" },
+            inputs: { type: "object", description: "Resolved input parameters" },
+            disclaimer: { type: "string" }
+          }
+        }
+      }
+    }]
   });
 });
 
